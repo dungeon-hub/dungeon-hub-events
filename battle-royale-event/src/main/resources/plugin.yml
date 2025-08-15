@@ -1,4 +1,16 @@
 name: battle-royale-event
-version: '1.0.0'
+version: '${version}'
 main: net.dungeonhub.events.BattleRoyaleEvent
 api-version: '1.20'
+
+commands:
+  questmaster:
+    description: Quest Master management commands
+    usage: /questmaster <spawn|remove|list|reload|tp|info> [args]
+    permission: dungeonhub.questmaster.admin
+    permission-message: You don't have permission to use this command.
+
+permissions:
+  dungeonhub.questmaster.admin:
+    description: Allows management of Quest Masters
+    default: op

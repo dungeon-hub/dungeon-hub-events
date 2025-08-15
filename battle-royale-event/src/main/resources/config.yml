@@ -1,0 +1,28 @@
+# Battle Royale Event Plugin Configuration
+# Quest Master System Configuration
+
+# General Settings
+debug: false
+auto-spawn-questmasters: true
+save-player-progress: true
+
+# World Settings
+default-world: world
+
+# Quest Master Spawn Settings
+questmaster-spawn-delay: 20  # ticks (1 second)
+
+# Quest System Settings
+quest-gui:
+  title: "Quest Master - {temple_name}"
+  size: 54  # inventory size (must be multiple of 9)
+  
+# Messages
+messages:
+  plugin-enabled: "§aDungeon Hub Battle Royale Plugin enabled with Quest GUI system!"
+  plugin-disabled: "§cDungeon Hub Battle Royale Plugin disabled!"
+  questmaster-spawned: "§aQuest Master {id} spawned successfully!"
+  questmaster-removed: "§cQuest Master {id} removed!"
+  quest-accepted: "§aQuest accepted: {quest_name}"
+  quest-completed: "§aQuest completed: {quest_name}"
+  no-permission: "§cYou don't have permission to use this command."
