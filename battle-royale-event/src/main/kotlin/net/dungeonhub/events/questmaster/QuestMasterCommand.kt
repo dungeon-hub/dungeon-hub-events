@@ -36,6 +36,7 @@ class QuestMasterCommand(
             "info" -> handleInfo(sender, args)
             "gui" -> handleGUI(sender, args)
             "quest" -> handleQuest(sender, args)
+            "class" -> handleClass(sender, args)
             else -> sendHelp(sender)
         }
         
@@ -236,11 +237,75 @@ class QuestMasterCommand(
                 }
                 
                 val questId = args[2]
-                plugin.questGUIManager.completeQuest(sender, questId)
+                // Force complete quest - admin command
+                val progress = plugin.questGUIManager.getPlayerProgress(sender)
+                if (progress.activeQuestId == questId) {
+                    progress.completeQuest(questId)
+                    sender.sendMessage("${ChatColor.GREEN}✓ Force completed quest: $questId")
+                } else {
+                    sender.sendMessage("${ChatColor.RED}You don't have that quest active!")
+                }
             }
             
             else -> {
                 sender.sendMessage("${ChatColor.RED}Usage: /questmaster quest <list|complete> [args]")
+            }
+        }
+    }
+    
+    private fun handleClass(sender: CommandSender, args: Array<out String>) {
+        if (sender !is Player) {
+            sender.sendMessage("${ChatColor.RED}This command can only be used by players.")
+            return
+        }
+        
+        if (args.size < 2) {
+            sender.sendMessage("${ChatColor.RED}Usage: /questmaster class <check|reset>")
+            return
+        }
+        
+        when (args[1].lowercase()) {
+            "check" -> {
+                if (plugin.questGUIManager.hasChosenClass(sender)) {
+                    val className = plugin.questGUIManager.getPlayerClassName(sender)
+                    sender.sendMessage("${ChatColor.GREEN}Your chosen class: ${ChatColor.GOLD}$className")
+                } else {
+                    sender.sendMessage("${ChatColor.YELLOW}You have not chosen a class yet.")
+                    sender.sendMessage("${ChatColor.GRAY}Interact with a Quest Master to choose your path!")
+                }
+            }
+            
+            "reset" -> {
+                if (!sender.hasPermission("dungeonhub.questmaster.admin")) {
+                    sender.sendMessage("${ChatColor.RED}You don't have permission to reset classes.")
+                    return
+                }
+                
+                // Allow resetting own class or specify a player
+                val targetPlayer = if (args.size >= 3) {
+                    plugin.server.getPlayer(args[2])
+                } else if (sender is Player) {
+                    sender
+                } else {
+                    sender.sendMessage("${ChatColor.RED}Usage: /questmaster class reset [player]")
+                    return
+                }
+                
+                if (targetPlayer == null) {
+                    sender.sendMessage("${ChatColor.RED}Player not found.")
+                    return
+                }
+                
+                // Reset the player's class and all progress
+                plugin.questGUIManager.resetPlayerClass(targetPlayer)
+                
+                sender.sendMessage("${ChatColor.GREEN}✓ Reset class and progress for player ${targetPlayer.name}")
+                targetPlayer.sendMessage("${ChatColor.YELLOW}⚠ Your class and quest progress have been reset by an administrator.")
+                targetPlayer.sendMessage("${ChatColor.GRAY}You can now choose a new class path.")
+            }
+            
+            else -> {
+                sender.sendMessage("${ChatColor.RED}Usage: /questmaster class <check|reset>")
             }
         }
     }
@@ -256,6 +321,8 @@ class QuestMasterCommand(
         sender.sendMessage("${ChatColor.YELLOW}/questmaster gui <quest_id> - Open Quest Master GUI")
         sender.sendMessage("${ChatColor.YELLOW}/questmaster quest list - Show your quest progress")
         sender.sendMessage("${ChatColor.YELLOW}/questmaster quest complete <quest_id> - Complete a quest (admin)")
+        sender.sendMessage("${ChatColor.YELLOW}/questmaster class check - Check your chosen class")
+        sender.sendMessage("${ChatColor.YELLOW}/questmaster class reset [player] - Reset class (admin)")
     }
     
     override fun onTabComplete(sender: CommandSender, command: Command, alias: String, args: Array<out String>): List<String> {
@@ -263,7 +330,7 @@ class QuestMasterCommand(
         
         when (args.size) {
             1 -> {
-                completions.addAll(listOf("spawn", "remove", "list", "reload", "tp", "teleport", "info", "gui", "quest"))
+                completions.addAll(listOf("spawn", "remove", "list", "reload", "tp", "teleport", "info", "gui", "quest", "class"))
             }
             2 -> {
                 when (args[0].lowercase()) {
@@ -273,16 +340,25 @@ class QuestMasterCommand(
                     "quest" -> {
                         completions.addAll(listOf("list", "complete"))
                     }
+                    "class" -> {
+                        completions.addAll(listOf("check", "reset"))
+                    }
                 }
             }
             3 -> {
-                if (args[0].lowercase() == "quest" && args[1].lowercase() == "complete") {
-                    // Add quest IDs for completion
-                    completions.addAll(plugin.questGUIManager.getQuestsForQuestMaster("temple_zeroth").map { it.id })
-                    completions.addAll(plugin.questGUIManager.getQuestsForQuestMaster("temple_fire").map { it.id })
-                    completions.addAll(plugin.questGUIManager.getQuestsForQuestMaster("temple_ice").map { it.id })
-                    completions.addAll(plugin.questGUIManager.getQuestsForQuestMaster("temple_forest").map { it.id })
-                    completions.addAll(plugin.questGUIManager.getQuestsForQuestMaster("temple_light").map { it.id })
+                when {
+                    args[0].lowercase() == "quest" && args[1].lowercase() == "complete" -> {
+                        // Add quest IDs for completion
+                        completions.addAll(plugin.questGUIManager.getQuestsForQuestMaster("temple_zeroth").map { it.id })
+                        completions.addAll(plugin.questGUIManager.getQuestsForQuestMaster("temple_fire").map { it.id })
+                        completions.addAll(plugin.questGUIManager.getQuestsForQuestMaster("temple_ice").map { it.id })
+                        completions.addAll(plugin.questGUIManager.getQuestsForQuestMaster("temple_forest").map { it.id })
+                        completions.addAll(plugin.questGUIManager.getQuestsForQuestMaster("temple_light").map { it.id })
+                    }
+                    args[0].lowercase() == "class" && args[1].lowercase() == "reset" -> {
+                        // Add online player names
+                        completions.addAll(plugin.server.onlinePlayers.map { it.name })
+                    }
                 }
             }
         }

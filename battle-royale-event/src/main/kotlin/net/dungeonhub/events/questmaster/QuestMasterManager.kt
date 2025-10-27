@@ -46,11 +46,11 @@ class QuestMasterManager(private val plugin: BattleRoyaleEvent) {
      */
     private fun loadConfig() {
         val validTemples = listOf(
-            mapOf("id" to "zeroth", "name" to "Shadow Temple", "x" to 100, "y" to 70, "z" to 100, "rewardType" to "BUFF", "rewardData" to "SPEED:2:300"),
-            mapOf("id" to "fire", "name" to "Fire Temple", "x" to -100, "y" to 70, "z" to 100, "rewardType" to "ITEM", "rewardData" to "GOLDEN_APPLE:2"),
-            mapOf("id" to "ice", "name" to "Ice Temple", "x" to 100, "y" to 70, "z" to -100, "rewardType" to "BUFF", "rewardData" to "RESISTANCE:1:600"),
-            mapOf("id" to "forest", "name" to "Forest Temple", "x" to -100, "y" to 70, "z" to -100, "rewardType" to "ITEM", "rewardData" to "DIAMOND_SWORD:1"),
-            mapOf("id" to "light", "name" to "Light Temple", "x" to 0, "y" to 80, "z" to 0, "rewardType" to "ABILITY", "rewardData" to "JUMP_BOOST:3:900")
+            mapOf("id" to "zeroth", "name" to "Athena", "x" to 100, "y" to 70, "z" to 100, "rewardType" to "BUFF", "rewardData" to "SPEED:2:300"),
+            mapOf("id" to "fire", "name" to "Hercules", "x" to -100, "y" to 70, "z" to 100, "rewardType" to "ITEM", "rewardData" to "GOLDEN_APPLE:2"),
+            mapOf("id" to "ice", "name" to "Artemis", "x" to 100, "y" to 70, "z" to -100, "rewardType" to "BUFF", "rewardData" to "RESISTANCE:1:600"),
+            mapOf("id" to "forest", "name" to "Sushruta", "x" to -100, "y" to 70, "z" to -100, "rewardType" to "ITEM", "rewardData" to "DIAMOND_SWORD:1"),
+            mapOf("id" to "light", "name" to "Merlin", "x" to 0, "y" to 80, "z" to 0, "rewardType" to "ABILITY", "rewardData" to "JUMP_BOOST:3:900")
         )
         val validTempleIds = validTemples.map { "temple_${it["id"]}" }.toSet()
         if (!configFile.exists()) {
@@ -67,12 +67,20 @@ class QuestMasterManager(private val plugin: BattleRoyaleEvent) {
         validTemples.forEach { temple ->
             val questId = "temple_${temple["id"]}"
             if (config.getConfigurationSection("questmasters.$questId") == null) {
-                config.set("questmasters.$questId.name", "Quest Master ${temple["name"]}")
+                val role = when(temple["id"]) {
+                    "zeroth" -> "Tank"
+                    "fire" -> "Berserker"
+                    "ice" -> "Archer"
+                    "forest" -> "Healer"
+                    "light" -> "Mage"
+                    else -> "Warrior"
+                }
+                config.set("questmasters.$questId.name", "${temple["name"]} - $role")
                 config.set("questmasters.$questId.world", "world")
                 config.set("questmasters.$questId.x", temple["x"])
                 config.set("questmasters.$questId.y", temple["y"])
                 config.set("questmasters.$questId.z", temple["z"])
-                config.set("questmasters.$questId.message", "Welcome to the ${temple["name"]}! I grant you ancient power.")
+                config.set("questmasters.$questId.message", "I am ${temple["name"]}, the $role! I grant you ancient power.")
                 config.set("questmasters.$questId.one-time-use", true)
                 config.set("questmasters.$questId.cooldown", 0)
                 config.set("questmasters.$questId.reward-type", temple["rewardType"])
@@ -91,23 +99,23 @@ class QuestMasterManager(private val plugin: BattleRoyaleEvent) {
         
         val defaultConfig = YamlConfiguration()
         
-        // Example Quest Masters for 5 temples
+        // Example Quest Masters for 5 characters
         val temples = listOf(
-            mapOf("id" to "zeroth", "name" to "Shadow Temple", "x" to 100, "y" to 70, "z" to 100, "rewardType" to "BUFF", "rewardData" to "SPEED:2:300"),
-            mapOf("id" to "fire", "name" to "Fire Temple", "x" to -100, "y" to 70, "z" to 100, "rewardType" to "ITEM", "rewardData" to "GOLDEN_APPLE:2"),
-            mapOf("id" to "ice", "name" to "Ice Temple", "x" to 100, "y" to 70, "z" to -100, "rewardType" to "BUFF", "rewardData" to "RESISTANCE:1:600"),
-            mapOf("id" to "forest", "name" to "Forest Temple", "x" to -100, "y" to 70, "z" to -100, "rewardType" to "ITEM", "rewardData" to "DIAMOND_SWORD:1"),
-            mapOf("id" to "light", "name" to "Light Temple", "x" to 0, "y" to 80, "z" to 0, "rewardType" to "ABILITY", "rewardData" to "JUMP_BOOST:3:900")
+            mapOf("id" to "zeroth", "name" to "Athena", "role" to "Tank", "x" to 100, "y" to 70, "z" to 100, "rewardType" to "BUFF", "rewardData" to "SPEED:2:300"),
+            mapOf("id" to "fire", "name" to "Hercules", "role" to "Berserker", "x" to -100, "y" to 70, "z" to 100, "rewardType" to "ITEM", "rewardData" to "GOLDEN_APPLE:2"),
+            mapOf("id" to "ice", "name" to "Artemis", "role" to "Archer", "x" to 100, "y" to 70, "z" to -100, "rewardType" to "BUFF", "rewardData" to "RESISTANCE:1:600"),
+            mapOf("id" to "forest", "name" to "Sushruta", "role" to "Healer", "x" to -100, "y" to 70, "z" to -100, "rewardType" to "ITEM", "rewardData" to "DIAMOND_SWORD:1"),
+            mapOf("id" to "light", "name" to "Merlin", "role" to "Mage", "x" to 0, "y" to 80, "z" to 0, "rewardType" to "ABILITY", "rewardData" to "JUMP_BOOST:3:900")
         )
 
         temples.forEach { temple ->
             val questId = "temple_${temple["id"]}"
-            defaultConfig.set("questmasters.$questId.name", "Quest Master ${temple["name"]}")
+            defaultConfig.set("questmasters.$questId.name", "${temple["name"]} - ${temple["role"]}")
             defaultConfig.set("questmasters.$questId.world", "world")
             defaultConfig.set("questmasters.$questId.x", temple["x"])
             defaultConfig.set("questmasters.$questId.y", temple["y"])
             defaultConfig.set("questmasters.$questId.z", temple["z"])
-            defaultConfig.set("questmasters.$questId.message", "Welcome to the ${temple["name"]}! I grant you ancient power.")
+            defaultConfig.set("questmasters.$questId.message", "I am ${temple["name"]}, the ${temple["role"]}! I grant you ancient power.")
             defaultConfig.set("questmasters.$questId.one-time-use", true)
             defaultConfig.set("questmasters.$questId.cooldown", 0)
             defaultConfig.set("questmasters.$questId.reward-type", temple["rewardType"])
