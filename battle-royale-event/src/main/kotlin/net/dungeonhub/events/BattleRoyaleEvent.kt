@@ -11,7 +11,16 @@ class BattleRoyaleEvent : JavaPlugin() {
     lateinit var questMasterManager: QuestMasterManager
         private set
     
-    lateinit var questGUIManager: QuestGUIManager
+    lateinit var questGUIManager: net.dungeonhub.events.questmaster.gui.QuestGUIManager
+        private set
+    
+    lateinit var passiveAbilityManager: net.dungeonhub.events.questmaster.PassiveAbilityManager
+        private set
+    
+    lateinit var questTimerManager: net.dungeonhub.events.questmaster.QuestTimerManager
+        private set
+    
+    lateinit var objectiveTracker: net.dungeonhub.events.questmaster.ObjectiveTracker
         private set
 
     override fun onEnable() {
@@ -31,14 +40,17 @@ class BattleRoyaleEvent : JavaPlugin() {
         questMasterManager = QuestMasterManager(this)
         questMasterManager.initialize()
         
-        // Initialize Quest GUI system
-        questGUIManager = QuestGUIManager(this)
+        // Initialize NEW Quest System
+        passiveAbilityManager = net.dungeonhub.events.questmaster.PassiveAbilityManager(this)
+        questTimerManager = net.dungeonhub.events.questmaster.QuestTimerManager(this)
+        objectiveTracker = net.dungeonhub.events.questmaster.ObjectiveTracker(this)
+        questGUIManager = net.dungeonhub.events.questmaster.gui.QuestGUIManager(this)
         
         // Register command
         getCommand("questmaster")?.setExecutor(QuestMasterCommand(questMasterManager, this))
         
-        // Register listeners
-        server.pluginManager.registerEvents(QuestMasterListener(questMasterManager, questGUIManager), this)
+        // Register listeners  
+        server.pluginManager.registerEvents(net.dungeonhub.events.questmaster.QuestMasterListener(questMasterManager, questGUIManager), this)
         
         logger.info("Dungeon Hub Battle Royale Plugin enabled with Quest GUI system!")
     }
@@ -52,6 +64,16 @@ class BattleRoyaleEvent : JavaPlugin() {
         // Clean up GUI system
         if (::questGUIManager.isInitialized) {
             questGUIManager.clearAllProgress()
+        }
+        
+        // Clean up timer system
+        if (::questTimerManager.isInitialized) {
+            questTimerManager.stopAllTimers()
+        }
+        
+        // Clean up objective tracker
+        if (::objectiveTracker.isInitialized) {
+            objectiveTracker.resetAll()
         }
         
         logger.info("Dungeon Hub Battle Royale Plugin disabled!")

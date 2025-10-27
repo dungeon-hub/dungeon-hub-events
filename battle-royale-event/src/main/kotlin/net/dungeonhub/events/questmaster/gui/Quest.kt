@@ -4,6 +4,23 @@ import org.bukkit.Material
 import org.bukkit.inventory.ItemStack
 
 /**
+ * Quest difficulty levels
+ */
+enum class QuestDifficulty {
+    EASY,    // Quests 1-3
+    MEDIUM,  // Quests 4-6
+    HARD     // Quests 7+
+}
+
+/**
+ * Quest category - determines which quest masters can offer it
+ */
+enum class QuestCategory {
+    GENERAL,        // Available to all quest masters
+    CLASS_SPECIFIC  // Only available to specific class
+}
+
+/**
  * Represents an individual quest that can be offered by a Quest Master
  */
 data class Quest(
@@ -13,6 +30,10 @@ data class Quest(
     val icon: Material = Material.BOOK,
     val rewardType: String,
     val rewardData: String,
+    val difficulty: QuestDifficulty = QuestDifficulty.EASY,
+    val category: QuestCategory = QuestCategory.GENERAL,
+    val classId: String? = null, // Only for CLASS_SPECIFIC quests
+    val timeLimit: Int = 900, // Time limit in seconds (default 15 minutes)
     val requirements: QuestRequirements = QuestRequirements(),
     val isCompleted: Boolean = false,
     val isAvailable: Boolean = true
@@ -94,13 +115,22 @@ data class QuestRequirements(
 }
 
 /**
- * Progress tracking for a player's quests
+ * Progress tracking for a player's quests - NEW SYSTEM
  */
 data class PlayerQuestProgress(
     val playerId: String,
     val completedQuests: MutableSet<String> = mutableSetOf(),
     val activeQuests: MutableMap<String, QuestObjective> = mutableMapOf(),
-    val questStartTimes: MutableMap<String, Long> = mutableMapOf()
+    val questStartTimes: MutableMap<String, Long> = mutableMapOf(),
+    
+    // New fields for the updated system
+    var totalQuestsCompleted: Int = 0,  // Total quests completed
+    var hasPassive: Boolean = false,     // Has unlocked passive (after 3 quests)
+    var currentQuestId: String? = null,  // Currently offered quest
+    var activeQuestId: String? = null,   // Currently active quest (with timer)
+    var questActivationTime: Long = 0,   // When quest was activated
+    var questTimeLimit: Int = 900,       // Time limit in seconds (15 min default)
+    val seenQuestIds: MutableSet<String> = mutableSetOf() // Quests already shown to player
 ) {
     fun isQuestCompleted(questId: String): Boolean {
         return completedQuests.contains(questId)
@@ -119,6 +149,74 @@ data class PlayerQuestProgress(
         activeQuests.remove(questId)
         completedQuests.add(questId)
         questStartTimes.remove(questId)
+        totalQuestsCompleted++
+        
+        // Check if player unlocked passive
+        if (totalQuestsCompleted >= 3 && !hasPassive) {
+            hasPassive = true
+        }
+    }
+    
+    /**
+     * Activates the current quest and starts the timer
+     */
+    fun activateQuest(questId: String, timeLimit: Int) {
+        activeQuestId = questId
+        questActivationTime = System.currentTimeMillis()
+        questTimeLimit = timeLimit
+    }
+    
+    /**
+     * Gets remaining time in seconds for active quest
+     */
+    fun getRemainingTime(): Int {
+        if (activeQuestId == null) return 0
+        val elapsed = (System.currentTimeMillis() - questActivationTime) / 1000
+        return maxOf(0, questTimeLimit - elapsed.toInt())
+    }
+    
+    /**
+     * Checks if active quest has expired
+     */
+    fun isQuestExpired(): Boolean {
+        return activeQuestId != null && getRemainingTime() <= 0
+    }
+    
+    /**
+     * Gets current difficulty stage based on completed quests
+     */
+    fun getCurrentDifficulty(): QuestDifficulty {
+        return when {
+            totalQuestsCompleted < 3 -> QuestDifficulty.EASY
+            totalQuestsCompleted < 6 -> QuestDifficulty.MEDIUM
+            else -> QuestDifficulty.HARD
+        }
+    }
+    
+    /**
+     * Fails the current quest and applies penalty
+     */
+    fun failQuest() {
+        activeQuestId = null
+        questActivationTime = 0
+        
+        // Apply penalty based on difficulty
+        when (getCurrentDifficulty()) {
+            QuestDifficulty.EASY -> {
+                // Reset to quest 1
+                totalQuestsCompleted = 0
+                completedQuests.clear()
+                hasPassive = false
+            }
+            QuestDifficulty.MEDIUM, QuestDifficulty.HARD -> {
+                // Reset to quest 4
+                totalQuestsCompleted = 3
+                // Keep first 3 quests completed
+                val toKeep = completedQuests.take(3).toSet()
+                completedQuests.clear()
+                completedQuests.addAll(toKeep)
+            }
+        }
     }
 }
 

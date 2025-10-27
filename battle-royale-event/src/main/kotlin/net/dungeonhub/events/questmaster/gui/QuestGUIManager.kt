@@ -2,8 +2,10 @@ package net.dungeonhub.events.questmaster.gui
 
 import net.dungeonhub.events.BattleRoyaleEvent
 import net.dungeonhub.events.questmaster.QuestMaster
+import net.dungeonhub.events.questmaster.QuestPool
 import org.bukkit.Bukkit
 import org.bukkit.Material
+import org.bukkit.Sound
 import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
 import org.bukkit.event.Listener
@@ -14,378 +16,508 @@ import org.bukkit.inventory.ItemStack
 import java.util.*
 
 /**
- * Manages the Quest Master GUI system
+ * Quest GUI Manager - Single quest at a time with activation system
  */
 class QuestGUIManager(private val plugin: BattleRoyaleEvent) : Listener {
     
-    private val openGUIs = mutableMapOf<UUID, String>() // Player UUID -> Quest Master ID
+    private val openGUIs = mutableMapOf<UUID, String>() // Player UUID -> GUI Type
     private val playerQuestProgress = mutableMapOf<UUID, PlayerQuestProgress>()
-    private val questConfig = QuestConfig(plugin)
+    private val playerChosenClass = mutableMapOf<UUID, String>()
+    private val pendingClassSelection = mutableMapOf<UUID, String>()
     
     init {
         plugin.server.pluginManager.registerEvents(this, plugin)
-        questConfig.load()
     }
     
-    /**
-     * Opens the Quest Master GUI for a player
-     */
+    // ==================== MAIN ENTRY POINT ====================
+    
     fun openQuestGUI(player: Player, questMaster: QuestMaster, quests: List<Quest>) {
-        val inventory = Bukkit.createInventory(null, 27, "§6${questMaster.name} - Quests")
+        val chosenClass = playerChosenClass[player.uniqueId]
         
-        // Add quest items (slots 10-14 for 5 quests)
-        val questSlots = listOf(10, 11, 12, 13, 14)
-        val playerProgress = getPlayerProgress(player)
-        
-        quests.forEachIndexed { index, quest ->
-            if (index < questSlots.size) {
-                val slot = questSlots[index]
-                val questItem = createQuestItem(quest, playerProgress)
-                inventory.setItem(slot, questItem)
-            }
+        // Check if player has already chosen a different class
+        if (chosenClass != null && chosenClass != questMaster.questId) {
+            player.sendMessage("§c✗ You have already chosen the path of ${getClassName(chosenClass)}!")
+            player.sendMessage("§7You cannot change your class once selected.")
+            player.playSound(player.location, Sound.ENTITY_VILLAGER_NO, 1.0f, 1.0f)
+            return
         }
         
-        // Add decorative items
-        addDecorativeItems(inventory)
+        // If player hasn't chosen a class yet, show confirmation GUI
+        if (chosenClass == null) {
+            openClassConfirmationGUI(player, questMaster)
+            return
+        }
         
-        // Add close button
-        val closeItem = ItemStack(Material.BARRIER)
-        val closeMeta = closeItem.itemMeta
-        closeMeta?.setDisplayName("§cClose")
-        closeMeta?.lore = listOf("§7Click to close this menu")
-        closeItem.itemMeta = closeMeta
-        inventory.setItem(22, closeItem)
+        // Player has chosen this class - show quest system
+        val progress = getPlayerProgress(player)
         
-        // Track open GUI
-        openGUIs[player.uniqueId] = questMaster.questId
+        // Check if they have an active quest with timer
+        if (progress.activeQuestId != null) {
+            openActiveQuestGUI(player, progress)
+        } else {
+            // Offer a new quest
+            offerNewQuest(player, progress, questMaster.questId)
+        }
+    }
+    
+    // ==================== CLASS SELECTION ====================
+    
+    private fun openClassConfirmationGUI(player: Player, questMaster: QuestMaster) {
+        val inventory = Bukkit.createInventory(null, 27, "§6Choose Your Path")
         
+        pendingClassSelection[player.uniqueId] = questMaster.questId
+        
+        val className = questMaster.name
+        val role = className.split(" - ").getOrNull(1) ?: "Warrior"
+        
+        // Accept button
+        val acceptItem = ItemStack(Material.LIME_WOOL)
+        val acceptMeta = acceptItem.itemMeta
+        acceptMeta?.setDisplayName("§a✓ ACCEPT")
+        acceptMeta?.lore = listOf(
+            "§7Join the path of:",
+            "§6$className",
+            "",
+            "§7This choice is §c§lPERMANENT§7!",
+            "§7You cannot change your class",
+            "§7once you accept.",
+            "",
+            "§aClick to accept this path"
+        )
+        acceptItem.itemMeta = acceptMeta
+        inventory.setItem(11, acceptItem)
+        
+        // Decline button
+        val declineItem = ItemStack(Material.RED_WOOL)
+        val declineMeta = declineItem.itemMeta
+        declineMeta?.setDisplayName("§c✗ DECLINE")
+        declineMeta?.lore = listOf("§7Return without choosing", "§7a class.", "", "§cClick to decline")
+        declineItem.itemMeta = declineMeta
+        inventory.setItem(15, declineItem)
+        
+        // Info item
+        val infoItem = ItemStack(Material.ENCHANTED_BOOK)
+        val infoMeta = infoItem.itemMeta
+        infoMeta?.setDisplayName("§6$className")
+        infoMeta?.lore = listOf(
+            "§7Role: §f$role",
+            "",
+            "§7Are you sure you want to join",
+            "§7the path of §6$className§7?",
+            "",
+            "§c⚠ WARNING:",
+            "§7This decision is §c§lPERMANENT§7!",
+            "§7You will not be able to change",
+            "§7your class after accepting.",
+            "",
+            "§7Choose wisely!"
+        )
+        infoItem.itemMeta = infoMeta
+        inventory.setItem(4, infoItem)
+        
+        // Decorative glass
+        val glass = ItemStack(Material.YELLOW_STAINED_GLASS_PANE)
+        val glassMeta = glass.itemMeta
+        glassMeta?.setDisplayName(" ")
+        glass.itemMeta = glassMeta
+        
+        val borderSlots = listOf(0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26)
+        borderSlots.forEach { slot -> inventory.setItem(slot, glass) }
+        
+        openGUIs[player.uniqueId] = "class_confirmation:${questMaster.questId}"
+        player.openInventory(inventory)
+        player.playSound(player.location, Sound.BLOCK_ENCHANTMENT_TABLE_USE, 1.0f, 1.0f)
+    }
+    
+    // ==================== QUEST OFFER ====================
+    
+    private fun offerNewQuest(player: Player, progress: PlayerQuestProgress, classId: String) {
+        // Get a random quest they haven't seen
+        val difficulty = progress.getCurrentDifficulty()
+        val quest = QuestPool.getRandomQuest(classId, progress.seenQuestIds, difficulty)
+        
+        if (quest == null) {
+            player.sendMessage("§c✗ No more quests available at your difficulty level!")
+            player.sendMessage("§7You have completed all available quests.")
+            return
+        }
+        
+        // Store as current quest
+        progress.currentQuestId = quest.id
+        progress.seenQuestIds.add(quest.id)
+        
+        // Open quest offer GUI
+        openQuestOfferGUI(player, quest, progress)
+    }
+    
+    private fun openQuestOfferGUI(player: Player, quest: Quest, progress: PlayerQuestProgress) {
+        val inventory = Bukkit.createInventory(null, 27, "§6Quest Offer")
+        
+        // Quest display (center)
+        val questItem = createQuestDisplayItem(quest, progress)
+        inventory.setItem(13, questItem)
+        
+        // Activate button
+        val activateItem = ItemStack(Material.LIME_CONCRETE)
+        val activateMeta = activateItem.itemMeta
+        activateMeta?.setDisplayName("§a§l✓ ACTIVATE QUEST")
+        activateMeta?.lore = listOf(
+            "§7Start this quest and begin",
+            "§7the §e${plugin.questTimerManager.formatTime(quest.timeLimit)}§7 timer.",
+            "",
+            "§c⚠ Warning:",
+            "§7If you fail to complete within",
+            "§7the time limit, you will lose progress!",
+            "",
+            "§aClick to activate"
+        )
+        activateItem.itemMeta = activateMeta
+        inventory.setItem(11, activateItem)
+        
+        // Decline button
+        val declineItem = ItemStack(Material.RED_CONCRETE)
+        val declineMeta = declineItem.itemMeta
+        declineMeta?.setDisplayName("§c§l✗ DECLINE QUEST")
+        declineMeta?.lore = listOf(
+            "§7Skip this quest and get",
+            "§7a different one.",
+            "",
+            "§7You cannot get this quest again.",
+            "",
+            "§cClick to decline"
+        )
+        declineItem.itemMeta = declineMeta
+        inventory.setItem(15, declineItem)
+        
+        // Progress info
+        val progressItem = createProgressInfoItem(progress)
+        inventory.setItem(4, progressItem)
+        
+        // Decorative glass
+        addDecorativeGlass(inventory)
+        
+        openGUIs[player.uniqueId] = "quest_offer:${quest.id}"
+        player.openInventory(inventory)
+        player.playSound(player.location, Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1.0f, 1.0f)
+    }
+    
+    // ==================== ACTIVE QUEST ====================
+    
+    private fun openActiveQuestGUI(player: Player, progress: PlayerQuestProgress) {
+        val questId = progress.activeQuestId ?: return
+        val quest = QuestPool.getAllQuests().find { it.id == questId } ?: return
+        
+        val inventory = Bukkit.createInventory(null, 27, "§6Active Quest")
+        
+        // Quest display
+        val questItem = createActiveQuestItem(quest, progress, player)
+        inventory.setItem(13, questItem)
+        
+        // Timer display
+        val timerItem = createTimerItem(progress)
+        inventory.setItem(4, timerItem)
+        
+        // Progress bar
+        val progressPercentage = plugin.objectiveTracker.getProgressPercentage(player, questId)
+        createProgressBar(inventory, progressPercentage)
+        
+        // Abandon button
+        val abandonItem = ItemStack(Material.BARRIER)
+        val abandonMeta = abandonItem.itemMeta
+        abandonMeta?.setDisplayName("§c§lABANDON QUEST")
+        abandonMeta?.lore = listOf(
+            "§7Give up on this quest.",
+            "",
+            "§c⚠ WARNING:",
+            "§7This will apply failure penalties!",
+            "",
+            "§cClick to abandon"
+        )
+        abandonItem.itemMeta = abandonMeta
+        inventory.setItem(22, abandonItem)
+        
+        // Decorative glass
+        addDecorativeGlass(inventory)
+        
+        openGUIs[player.uniqueId] = "active_quest:$questId"
         player.openInventory(inventory)
     }
     
-    /**
-     * Creates a quest item with proper status and styling
-     */
-    private fun createQuestItem(quest: Quest, playerProgress: PlayerQuestProgress): ItemStack {
-        val isCompleted = playerProgress.isQuestCompleted(quest.id)
-        val isActive = playerProgress.isQuestActive(quest.id)
-        
-        val material = when {
-            isCompleted -> Material.LIME_DYE  // Green for completed
-            isActive -> Material.YELLOW_DYE   // Yellow for active
-            quest.isAvailable -> quest.icon   // Original icon for available
-            else -> Material.GRAY_DYE         // Gray for unavailable
-        }
-        
-        val item = ItemStack(material)
+    // ==================== ITEM CREATION ====================
+    
+    private fun createQuestDisplayItem(quest: Quest, progress: PlayerQuestProgress): ItemStack {
+        val item = ItemStack(quest.icon)
         val meta = item.itemMeta
         
-        meta?.let {
-            val displayName = when {
-                isCompleted -> "§a✓ ${quest.name}"
-                isActive -> "§e⚡ ${quest.name}"
-                quest.isAvailable -> "§6${quest.name}"
-                else -> "§8${quest.name}"
-            }
-            it.setDisplayName(displayName)
-            
-            val lore = mutableListOf<String>()
-            
-            // Description
-            lore.add("§7Description:")
-            quest.description.forEach { line -> lore.add("§f  $line") }
-            lore.add("")
-            
-            // Status
-            when {
-                isCompleted -> {
-                    lore.add("§a✓ COMPLETED")
-                    lore.add("§7You have already finished this quest.")
-                }
-                isActive -> {
-                    lore.add("§e⚡ IN PROGRESS")
-                    val objective = playerProgress.activeQuests[quest.id]
-                    if (objective != null) {
-                        lore.add("§7Progress: §f${objective.getProgressText()}")
-                    }
-                }
-                quest.isAvailable -> {
-                    lore.add("§a► AVAILABLE")
-                    lore.add("§7Click to accept this quest!")
-                }
-                else -> {
-                    lore.add("§c✗ NOT AVAILABLE")
-                    if (quest.requirements.hasRequirements()) {
-                        lore.add("§7Requirements:")
-                        quest.requirements.getDisplayText().forEach { req -> 
-                            lore.add("§c  ✗ $req") 
-                        }
-                    }
-                }
-            }
-            
-            lore.add("")
-            lore.add("§7Reward: §f${quest.rewardData}")
-            
-            // Add quest type info
-            lore.add("§7Type: §f${quest.rewardType}")
-            
-            it.lore = lore
-            item.itemMeta = it
+        meta?.setDisplayName("§6§l${quest.name}")
+        
+        val lore = mutableListOf<String>()
+        lore.add("§7Difficulty: ${getDifficultyColor(quest.difficulty)}${quest.difficulty}")
+        lore.add("§7Category: §f${if (quest.category == QuestCategory.GENERAL) "General" else "Class-Specific"}")
+        lore.add("")
+        lore.add("§7Description:")
+        quest.description.forEach { line -> lore.add("§f  $line") }
+        lore.add("")
+        lore.add("§7Time Limit: §e${plugin.questTimerManager.formatTime(quest.timeLimit)}")
+        lore.add("§7Reward: §a${quest.rewardData}")
+        lore.add("")
+        lore.add("§7Your Progress: §e${progress.totalQuestsCompleted}/3 §7quests")
+        if (progress.hasPassive) {
+            lore.add("§a✓ Passive Unlocked")
         }
         
+        meta?.lore = lore
+        item.itemMeta = meta
         return item
     }
     
-    /**
-     * Adds decorative items to make the GUI look better
-     */
-    private fun addDecorativeItems(inventory: Inventory) {
+    private fun createActiveQuestItem(quest: Quest, progress: PlayerQuestProgress, player: Player): ItemStack {
+        val item = ItemStack(quest.icon)
+        val meta = item.itemMeta
+        
+        meta?.setDisplayName("§6§l${quest.name}")
+        
+        val (current, required) = plugin.objectiveTracker.checkObjective(player, quest.id)
+        val percentage = plugin.objectiveTracker.getProgressPercentage(player, quest.id)
+        
+        val lore = mutableListOf<String>()
+        lore.add("§7Status: §e§lACTIVE")
+        lore.add("")
+        lore.add("§7Objective Progress:")
+        lore.add("§f  $current / $required §7(§e$percentage%§7)")
+        lore.add("")
+        quest.description.forEach { line -> lore.add("§7  $line") }
+        lore.add("")
+        lore.add("§7Time Remaining: §e${plugin.questTimerManager.formatTime(progress.getRemainingTime())}")
+        
+        meta?.lore = lore
+        item.itemMeta = meta
+        return item
+    }
+    
+    private fun createTimerItem(progress: PlayerQuestProgress): ItemStack {
+        val remaining = progress.getRemainingTime()
+        val item = when {
+            remaining > 300 -> ItemStack(Material.LIME_STAINED_GLASS_PANE)
+            remaining > 120 -> ItemStack(Material.YELLOW_STAINED_GLASS_PANE)
+            else -> ItemStack(Material.RED_STAINED_GLASS_PANE)
+        }
+        
+        val meta = item.itemMeta
+        meta?.setDisplayName("§6⏱ Timer")
+        meta?.lore = listOf(
+            "§7Time Remaining:",
+            "§e§l${plugin.questTimerManager.formatTime(remaining)}",
+            "",
+            when {
+                remaining > 300 -> "§a✓ Plenty of time"
+                remaining > 120 -> "§e⚠ Time running out"
+                else -> "§c⚠ HURRY!"
+            }
+        )
+        item.itemMeta = meta
+        return item
+    }
+    
+    private fun createProgressInfoItem(progress: PlayerQuestProgress): ItemStack {
+        val item = ItemStack(Material.BOOK)
+        val meta = item.itemMeta
+        
+        meta?.setDisplayName("§6Your Progress")
+        meta?.lore = listOf(
+            "§7Quests Completed: §e${progress.totalQuestsCompleted}",
+            "§7Current Stage: ${getDifficultyColor(progress.getCurrentDifficulty())}${progress.getCurrentDifficulty()}",
+            "",
+            if (progress.hasPassive) "§a✓ Passive Unlocked" else "§7Complete 3 quests to unlock passive",
+            "",
+            "§7Quests until passive: §e${maxOf(0, 3 - progress.totalQuestsCompleted)}"
+        )
+        item.itemMeta = meta
+        return item
+    }
+    
+    private fun createProgressBar(inventory: Inventory, percentage: Int): Unit {
+        val filledSlots = (percentage / 10).coerceIn(0, 9)
+        
+        // Use slots 18-26 (9 slots) for progress bar in a 27-slot inventory
+        for (i in 0 until 9) {
+            val slot = 18 + i
+            val item = if (i < filledSlots) {
+                ItemStack(Material.LIME_STAINED_GLASS_PANE)
+            } else {
+                ItemStack(Material.GRAY_STAINED_GLASS_PANE)
+            }
+            
+            val meta = item.itemMeta
+            meta?.setDisplayName(if (i < filledSlots) "§a■" else "§7□")
+            item.itemMeta = meta
+            inventory.setItem(slot, item)
+        }
+    }
+    
+    private fun addDecorativeGlass(inventory: Inventory) {
         val glass = ItemStack(Material.BLACK_STAINED_GLASS_PANE)
         val glassMeta = glass.itemMeta
         glassMeta?.setDisplayName(" ")
         glass.itemMeta = glassMeta
         
-        // Fill borders with glass panes
-        val borderSlots = listOf(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 17, 18, 19, 20, 21, 23, 24, 25, 26)
-        borderSlots.forEach { slot ->
-            inventory.setItem(slot, glass)
-        }
-        
-        // Add quest master info item
-        val infoItem = ItemStack(Material.ENCHANTED_BOOK)
-        val infoMeta = infoItem.itemMeta
-        infoMeta?.setDisplayName("§6Quest Master")
-        infoMeta?.lore = listOf(
-            "§7Welcome to my quest offerings!",
-            "§7Choose a quest to begin your journey.",
-            "",
-            "§7Available quests: §a5",
-            "§7Complete quests to earn rewards!"
-        )
-        infoItem.itemMeta = infoMeta
-        inventory.setItem(4, infoItem)
+        val borderSlots = listOf(0, 1, 2, 3, 5, 6, 7, 8, 9, 17)
+        borderSlots.forEach { slot -> inventory.setItem(slot, glass) }
     }
     
-    /**
-     * Handles inventory click events
-     */
+    private fun getDifficultyColor(difficulty: QuestDifficulty): String {
+        return when (difficulty) {
+            QuestDifficulty.EASY -> "§a"
+            QuestDifficulty.MEDIUM -> "§e"
+            QuestDifficulty.HARD -> "§c"
+        }
+    }
+    
+    // ==================== EVENT HANDLERS ====================
+    
     @EventHandler
     fun onInventoryClick(event: InventoryClickEvent) {
         val player = event.whoClicked as? Player ?: return
-        val questMasterId = openGUIs[player.uniqueId] ?: return
+        val guiId = openGUIs[player.uniqueId] ?: return
         
-        if (event.view.title.contains("Quests")) {
-            event.isCancelled = true
-            
-            val clickedItem = event.currentItem ?: return
-            val slot = event.slot
-            
-            when (slot) {
-                22 -> {
-                    // Close button
-                    player.closeInventory()
-                    return
-                }
-                10, 11, 12, 13, 14 -> {
-                    // Quest slots
-                    handleQuestClick(player, questMasterId, slot, clickedItem)
-                }
-            }
-        }
-    }
-    
-    /**
-     * Handles when a quest is clicked
-     */
-    private fun handleQuestClick(player: Player, questMasterId: String, slot: Int, clickedItem: ItemStack) {
-        val questIndex = when (slot) {
-            10 -> 0
-            11 -> 1
-            12 -> 2
-            13 -> 3
-            14 -> 4
-            else -> return
-        }
-        
-        // Get the quest master and its quests
-        val questMaster = plugin.questMasterManager.getQuestMaster(questMasterId) ?: return
-        val quests = getQuestsForQuestMaster(questMasterId)
-        
-        if (questIndex >= quests.size) return
-        val quest = quests[questIndex]
-        
-        val playerProgress = getPlayerProgress(player)
+        event.isCancelled = true
+        val clickedItem = event.currentItem ?: return
+        val slot = event.slot
         
         when {
-            playerProgress.isQuestCompleted(quest.id) -> {
-                player.sendMessage("§cYou have already completed this quest!")
-            }
-            playerProgress.isQuestActive(quest.id) -> {
-                player.sendMessage("§eThis quest is already in progress!")
-                // Show progress
-                val objective = playerProgress.activeQuests[quest.id]
-                if (objective != null) {
-                    player.sendMessage("§7Progress: ${objective.getProgressText()}")
-                }
-            }
-            !quest.isAvailable -> {
-                player.sendMessage("§cThis quest is not available yet!")
-                if (quest.requirements.hasRequirements()) {
-                    player.sendMessage("§7Requirements:")
-                    quest.requirements.getDisplayText().forEach { req ->
-                        player.sendMessage("§c  ✗ $req")
-                    }
-                }
-            }
-            else -> {
-                // Start the quest
-                startQuest(player, quest)
+            guiId.startsWith("class_confirmation:") -> handleClassConfirmation(player, slot)
+            guiId.startsWith("quest_offer:") -> handleQuestOffer(player, slot, guiId)
+            guiId.startsWith("active_quest:") -> handleActiveQuest(player, slot)
+        }
+    }
+    
+    private fun handleClassConfirmation(player: Player, slot: Int) {
+        when (slot) {
+            11 -> { // Accept
+                val questMasterId = pendingClassSelection[player.uniqueId] ?: return
+                playerChosenClass[player.uniqueId] = questMasterId
+                pendingClassSelection.remove(player.uniqueId)
+                
+                val className = getClassName(questMasterId)
                 player.closeInventory()
+                player.sendMessage("§a✓ You have chosen the path of §6$className§a!")
+                player.sendMessage("§7This choice is permanent. Your journey begins now!")
+                player.playSound(player.location, Sound.UI_TOAST_CHALLENGE_COMPLETE, 1.0f, 1.0f)
+                
+                // Offer first quest
+                val progress = getPlayerProgress(player)
+                offerNewQuest(player, progress, questMasterId)
+            }
+            15 -> { // Decline
+                pendingClassSelection.remove(player.uniqueId)
+                player.closeInventory()
+                player.sendMessage("§7You have declined to choose a class.")
+                player.playSound(player.location, Sound.ENTITY_VILLAGER_NO, 1.0f, 1.0f)
             }
         }
     }
     
-    /**
-     * Starts a quest for a player
-     */
-    private fun startQuest(player: Player, quest: Quest) {
-        val playerProgress = getPlayerProgress(player)
+    private fun handleQuestOffer(player: Player, slot: Int, guiId: String) {
+        val questId = guiId.substringAfter("quest_offer:")
+        val progress = getPlayerProgress(player)
+        val quest = QuestPool.getAllQuests().find { it.id == questId } ?: return
         
-        // Create quest objective based on quest type
-        val objective = createQuestObjective(quest)
-        playerProgress.startQuest(quest.id, objective)
-        
-        player.sendMessage("§a✓ Quest Started: §f${quest.name}")
-        player.sendMessage("§7Objective: ${objective.getProgressText()}")
-        
-        // Play sound
-        player.playSound(player.location, org.bukkit.Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1.0f, 1.5f)
-    }
-    
-    /**
-     * Creates a quest objective based on the quest configuration
-     */
-    private fun createQuestObjective(quest: Quest): QuestObjective {
-        // This is a simple implementation - you can expand this based on your quest types
-        return when (quest.rewardType.uppercase()) {
-            "KILL" -> QuestObjective(ObjectiveType.KILL_MOBS, "players", 0, 1)
-            "COLLECT" -> QuestObjective(ObjectiveType.COLLECT_ITEMS, "items", 0, 5)
-            "SURVIVE" -> QuestObjective(ObjectiveType.SURVIVE_TIME, "time", 0, 300) // 5 minutes
-            "EXPLORE" -> QuestObjective(ObjectiveType.REACH_LOCATION, "location", 0, 1)
-            else -> QuestObjective(ObjectiveType.CUSTOM, "objective", 0, 1, mapOf<String, String>("description" to (quest.description.firstOrNull() ?: "Complete the objective")))
-        }
-    }
-    
-    /**
-     * Handles inventory close events
-     */
-    @EventHandler
-    fun onInventoryClose(event: InventoryCloseEvent) {
-        val player = event.player as? Player ?: return
-        openGUIs.remove(player.uniqueId)
-    }
-    
-    /**
-     * Gets or creates player quest progress
-     */
-    fun getPlayerProgress(player: Player): PlayerQuestProgress {
-        return playerQuestProgress.getOrPut(player.uniqueId) {
-            PlayerQuestProgress(player.uniqueId.toString())
-        }
-    }
-    
-    /**
-     * Gets the quests for a specific Quest Master
-     * This loads from configuration
-     */
-    fun getQuestsForQuestMaster(questMasterId: String): List<Quest> {
-        return questConfig.loadQuestsForQuestMaster(questMasterId)
-    }
-    
-    /**
-     * Creates default quests for each Quest Master
-     */
-    private fun getDefaultQuests(questMasterId: String): List<Quest> {
-        return when (questMasterId) {
-            "temple_zeroth" -> listOf(
-                Quest("zeroth_1", "Shadow Hunter", listOf("Eliminate 3 opponents in darkness", "without being detected"), Material.IRON_SWORD, "ITEM", "POTION:1"),
-                Quest("zeroth_2", "Night Walker", listOf("Survive for 5 minutes at night", "without using torches"), Material.BLACK_WOOL, "BUFF", "NIGHT_VISION:1:600"),
-                Quest("zeroth_3", "Void Stalker", listOf("Travel 1000 blocks in darkness", "without taking damage"), Material.LEATHER_BOOTS, "ITEM", "ENDER_PEARL:5"),
-                Quest("zeroth_4", "Shadow Strike", listOf("Get 5 eliminations while", "invisible"), Material.FERMENTED_SPIDER_EYE, "BUFF", "INVISIBILITY:1:300"),
-                Quest("zeroth_5", "Master of Shadows", listOf("Complete all Shadow Temple", "trials"), Material.NETHER_STAR, "ITEM", "DIAMOND_BOOTS:1", QuestRequirements(completedQuests = listOf("zeroth_1", "zeroth_2", "zeroth_3", "zeroth_4")))
-            )
-            "temple_fire" -> listOf(
-                Quest("fire_1", "Flame Bearer", listOf("Set 10 opponents on fire", "using flame weapons"), Material.FLINT_AND_STEEL, "ITEM", "FIRE_CHARGE:5"),
-                Quest("fire_2", "Inferno Walker", listOf("Survive in lava for", "30 seconds"), Material.MAGMA_CREAM, "BUFF", "FIRE_RESISTANCE:1:600"),
-                Quest("fire_3", "Blazing Warrior", listOf("Deal 500 fire damage", "to opponents"), Material.BLAZE_ROD, "ITEM", "ENCHANTED_BOOK:1"),
-                Quest("fire_4", "Phoenix Rising", listOf("Resurrect 3 times using", "fire resistance"), Material.FEATHER, "ITEM", "TOTEM_OF_UNDYING:1"),
-                Quest("fire_5", "Master of Flames", listOf("Prove your mastery over", "all things fire"), Material.NETHER_STAR, "BUFF", "FIRE_RESISTANCE:2:1800", QuestRequirements(completedQuests = listOf("fire_1", "fire_2", "fire_3", "fire_4")))
-            )
-            "temple_ice" -> listOf(
-                Quest("ice_1", "Frost Walker", listOf("Freeze 10 blocks of water", "by walking over them"), Material.FROSTED_ICE, "ITEM", "ICE:10"),
-                Quest("ice_2", "Chill Survivor", listOf("Survive 5 minutes in snow", "without taking damage"), Material.SNOWBALL, "BUFF", "RESISTANCE:1:600"),
-                Quest("ice_3", "Glacial Warrior", listOf("Deal 500 damage with", "ice-based weapons"), Material.PACKED_ICE, "ITEM", "ENCHANTED_BOOK:1"),
-                Quest("ice_4", "Frozen Heart", listOf("Take 100 damage from cold", "and survive"), Material.BLUE_ICE, "BUFF", "ABSORPTION:1:600"),
-                Quest("ice_5", "Master of Frost", listOf("Complete all Ice Temple", "challenges"), Material.NETHER_STAR, "ITEM", "DIAMOND_HELMET:1", QuestRequirements(completedQuests = listOf("ice_1", "ice_2", "ice_3", "ice_4")))
-            )
-            "temple_forest" -> listOf(
-                Quest("forest_1", "Nature's Ally", listOf("Plant 20 saplings", "during a match"), Material.OAK_SAPLING, "ITEM", "BONE_MEAL:10"),
-                Quest("forest_2", "Beast Tamer", listOf("Tame 3 animals in the forest", "during a match"), Material.LEAD, "BUFF", "SPEED:1:600"),
-                Quest("forest_3", "Woodland Warrior", listOf("Deal 500 damage with", "wooden weapons"), Material.WOODEN_SWORD, "ITEM", "ENCHANTED_BOOK:1"),
-                Quest("forest_4", "Leaf Cloak", listOf("Hide in leaves for 2 minutes", "without being found"), Material.OAK_LEAVES, "BUFF", "INVISIBILITY:1:300"),
-                Quest("forest_5", "Master of Nature", listOf("Complete all Forest Temple", "quests"), Material.NETHER_STAR, "ITEM", "DIAMOND_AXE:1", QuestRequirements(completedQuests = listOf("forest_1", "forest_2", "forest_3", "forest_4")))
-            )
-            "temple_light" -> listOf(
-                Quest("light_1", "Radiant Defender", listOf("Defeat 10 mobs with", "light-based weapons"), Material.GLOWSTONE, "ITEM", "GLOWSTONE_DUST:10"),
-                Quest("light_2", "Sun Walker", listOf("Survive a full day in sunlight", "without taking damage"), Material.SUNFLOWER, "BUFF", "REGENERATION:1:600"),
-                Quest("light_3", "Blinding Warrior", listOf("Blind 5 opponents", "using flash potions"), Material.SPECTRAL_ARROW, "ITEM", "ENCHANTED_BOOK:1"),
-                Quest("light_4", "Beacon Builder", listOf("Build and activate a beacon", "during a match"), Material.BEACON, "BUFF", "SPEED:2:600"),
-                Quest("light_5", "Master of Light", listOf("Complete all Light Temple", "quests"), Material.NETHER_STAR, "ITEM", "ELYTRA:1", QuestRequirements(completedQuests = listOf("light_1", "light_2", "light_3", "light_4")))
-            )
-            else -> emptyList()
-        }
-    }
-    
-    /**
-     * Completes a quest for a player
-     */
-    fun completeQuest(player: Player, questId: String) {
-        val playerProgress = getPlayerProgress(player)
-        
-        if (playerProgress.isQuestActive(questId)) {
-            playerProgress.completeQuest(questId)
-            
-            // Find the quest to get reward info
-            val quest = getAllQuests().find { it.id == questId }
-            if (quest != null) {
-                player.sendMessage("§a✓ Quest Completed: §f${quest.name}")
-                player.sendMessage("§7Reward: §f${quest.rewardData}")
+        when (slot) {
+            11 -> { // Activate
+                activateQuest(player, quest, progress)
+            }
+            15 -> { // Decline
+                progress.currentQuestId = null
+                player.closeInventory()
+                player.sendMessage("§7Quest declined. Getting a new quest...")
+                player.playSound(player.location, Sound.BLOCK_NOTE_BLOCK_BASS, 1.0f, 0.5f)
                 
-                // Give reward (you can integrate this with your existing reward system)
-                giveQuestReward(player, quest)
-                
-                // Play completion sound
-                player.playSound(player.location, org.bukkit.Sound.UI_TOAST_CHALLENGE_COMPLETE, 1.0f, 1.0f)
+                // Offer new quest
+                val classId = playerChosenClass[player.uniqueId] ?: return
+                offerNewQuest(player, progress, classId)
             }
         }
     }
     
-    /**
-     * Gets all quests from all Quest Masters
-     */
-    private fun getAllQuests(): List<Quest> {
-        val allQuests = mutableListOf<Quest>()
-        listOf("temple_zeroth", "temple_fire", "temple_ice", "temple_forest", "temple_light").forEach { questMasterId ->
-            allQuests.addAll(getQuestsForQuestMaster(questMasterId))
+    private fun handleActiveQuest(player: Player, slot: Int) {
+        when (slot) {
+            22 -> { // Abandon
+                abandonQuest(player)
+            }
         }
-        return allQuests
     }
     
-    /**
-     * Gives quest rewards to player
-     */
-    private fun giveQuestReward(player: Player, quest: Quest) {
-        // This is a simple implementation - integrate with your existing reward system
+    // ==================== QUEST ACTIONS ====================
+    
+    private fun activateQuest(player: Player, quest: Quest, progress: PlayerQuestProgress) {
+        progress.activateQuest(quest.id, quest.timeLimit)
+        plugin.objectiveTracker.resetPlayer(player)
+        
+        player.closeInventory()
+        player.sendMessage("§a✓ Quest Activated: §6${quest.name}")
+        player.sendMessage("§7You have §e${plugin.questTimerManager.formatTime(quest.timeLimit)}§7 to complete it!")
+        player.playSound(player.location, Sound.ENTITY_PLAYER_LEVELUP, 1.0f, 1.0f)
+        
+        // Start timer
+        plugin.questTimerManager.startTimer(player, progress) {
+            failQuest(player, "Time expired!")
+        }
+        
+        // Start checking for completion
+        startCompletionChecker(player, quest, progress)
+    }
+    
+    private fun abandonQuest(player: Player) {
+        player.closeInventory()
+        player.sendMessage("§c✗ Quest abandoned!")
+        failQuest(player, "Quest abandoned")
+    }
+    
+    private fun failQuest(player: Player, reason: String) {
+        val progress = getPlayerProgress(player)
+        plugin.questTimerManager.stopTimer(player)
+        
+        player.sendMessage("§c§l✗ QUEST FAILED!")
+        player.sendMessage("§7Reason: §c$reason")
+        
+        val difficulty = progress.getCurrentDifficulty()
+        progress.failQuest()
+        
+        when (difficulty) {
+            QuestDifficulty.EASY -> {
+                player.sendMessage("§c§lPenalty: Reset to Quest 1")
+                player.sendMessage("§7You have lost all progress.")
+            }
+            QuestDifficulty.MEDIUM, QuestDifficulty.HARD -> {
+                player.sendMessage("§c§lPenalty: Reset to Quest 4")
+                player.sendMessage("§7You kept your passive ability.")
+            }
+        }
+        
+        player.playSound(player.location, Sound.ENTITY_ENDER_DRAGON_GROWL, 1.0f, 0.5f)
+    }
+    
+    private fun completeQuest(player: Player, quest: Quest, progress: PlayerQuestProgress) {
+        plugin.questTimerManager.stopTimer(player)
+        progress.completeQuest(quest.id)
+        progress.activeQuestId = null
+        
+        player.sendMessage("§a§l✓ QUEST COMPLETED!")
+        player.sendMessage("§6${quest.name}")
+        player.sendMessage("§7Reward: §a${quest.rewardData}")
+        player.playSound(player.location, Sound.UI_TOAST_CHALLENGE_COMPLETE, 1.0f, 1.0f)
+        
+        // Check for passive unlock
+        if (progress.totalQuestsCompleted == 3 && !progress.hasPassive) {
+            val classId = playerChosenClass[player.uniqueId] ?: return
+            plugin.passiveAbilityManager.grantPassive(player, classId)
+        }
+        
+        // Give reward
+        giveReward(player, quest)
+    }
+    
+    private fun giveReward(player: Player, quest: Quest) {
         when (quest.rewardType.uppercase()) {
             "ITEM" -> {
                 val parts = quest.rewardData.split(":")
@@ -396,22 +528,105 @@ class QuestGUIManager(private val plugin: BattleRoyaleEvent) : Listener {
                         val item = ItemStack(material, amount)
                         player.inventory.addItem(item)
                     } catch (e: Exception) {
-                        plugin.logger.warning("Invalid quest reward item: ${quest.rewardData}")
+                        plugin.logger.warning("Invalid reward: ${quest.rewardData}")
                     }
                 }
             }
             "BUFF" -> {
-                // Apply potion effect - integrate with your existing buff system
-                player.sendMessage("§aBuff applied: ${quest.rewardData}")
+                val parts = quest.rewardData.split(":")
+                if (parts.size >= 3) {
+                    try {
+                        val effectType = org.bukkit.potion.PotionEffectType.getByName(parts[0])
+                        val amplifier = parts[1].toIntOrNull() ?: 0
+                        val duration = parts[2].toIntOrNull() ?: 600
+                        
+                        if (effectType != null) {
+                            val effect = org.bukkit.potion.PotionEffect(effectType, duration, amplifier, false, true, true)
+                            player.addPotionEffect(effect)
+                        }
+                    } catch (e: Exception) {
+                        plugin.logger.warning("Invalid buff: ${quest.rewardData}")
+                    }
+                }
             }
         }
     }
     
-    /**
-     * Clears all player data (useful for testing or resets)
-     */
+    private fun startCompletionChecker(player: Player, quest: Quest, progress: PlayerQuestProgress) {
+        object : org.bukkit.scheduler.BukkitRunnable() {
+            override fun run() {
+                if (!player.isOnline || progress.activeQuestId != quest.id) {
+                    cancel()
+                    return
+                }
+                
+                if (plugin.objectiveTracker.isObjectiveComplete(player, quest.id)) {
+                    cancel()
+                    completeQuest(player, quest, progress)
+                }
+            }
+        }.runTaskTimer(plugin, 20L, 20L) // Check every second
+    }
+    
+    // ==================== UTILITY ====================
+    
+    @EventHandler
+    fun onInventoryClose(event: InventoryCloseEvent) {
+        val player = event.player as? Player ?: return
+        openGUIs.remove(player.uniqueId)
+    }
+    
+    fun getPlayerProgress(player: Player): PlayerQuestProgress {
+        return playerQuestProgress.getOrPut(player.uniqueId) {
+            PlayerQuestProgress(player.uniqueId.toString())
+        }
+    }
+    
+    fun hasChosenClass(player: Player): Boolean = playerChosenClass.containsKey(player.uniqueId)
+    
+    fun getPlayerClass(player: Player): String? = playerChosenClass[player.uniqueId]
+    
+    fun getPlayerClassName(player: Player): String? {
+        val classId = playerChosenClass[player.uniqueId] ?: return null
+        return getClassName(classId)
+    }
+    
+    private fun getClassName(questMasterId: String): String {
+        return when (questMasterId) {
+            "temple_zeroth" -> "Athena - Tank"
+            "temple_fire" -> "Hercules - Berserker"
+            "temple_ice" -> "Artemis - Archer"
+            "temple_forest" -> "Sushruta - Healer"
+            "temple_light" -> "Merlin - Mage"
+            else -> "Unknown Class"
+        }
+    }
+    
+    fun resetPlayerClass(player: Player) {
+        playerChosenClass.remove(player.uniqueId)
+        val progress = getPlayerProgress(player)
+        progress.completedQuests.clear()
+        progress.activeQuests.clear()
+        progress.questStartTimes.clear()
+        progress.totalQuestsCompleted = 0
+        progress.hasPassive = false
+        progress.currentQuestId = null
+        progress.activeQuestId = null
+        progress.seenQuestIds.clear()
+        pendingClassSelection.remove(player.uniqueId)
+        openGUIs.remove(player.uniqueId)
+        plugin.questTimerManager.stopTimer(player)
+        plugin.passiveAbilityManager.removePassive(player)
+        plugin.objectiveTracker.resetPlayer(player)
+    }
+    
     fun clearAllProgress() {
         playerQuestProgress.clear()
         openGUIs.clear()
+        playerChosenClass.clear()
+        pendingClassSelection.clear()
     }
+    
+    // Dummy methods for compatibility
+    fun getQuestsForQuestMaster(questMasterId: String): List<Quest> = emptyList()
 }
